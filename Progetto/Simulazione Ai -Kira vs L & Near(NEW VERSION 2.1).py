@@ -760,6 +760,32 @@ def run_streamlit_simulation():
         diario.mostra()
         fig = build_plotly_figure(net)
         st.plotly_chart(fig, use_container_width=True)
+        # === Modalità Spettatore: simulazione automatica ===
+    if st.session_state.get('start_sim', False) and st.session_state['ruolo'] == "Spettatore":
+        st.title("🎥 Modalità Spettatore")
+        st.markdown("Osserva come L e Near analizzano la rete. Tutto è automatizzato.")
+
+        net = st.session_state['network']
+        detectiveL = st.session_state['detectiveL']
+        detectiveNear = st.session_state['detectiveNear']
+        diario = st.session_state['diario']
+        turno = st.session_state['turno']
+
+        with st.expander(f"🔁 Turno {turno} automatico", expanded=True):
+            for node in net.nodes:
+                result = detectiveL.interrogate_node(node, diario, turno)
+                if result:
+                    st.markdown(f"**L ha concluso su Nodo {node}**: {', '.join(result)}")
+
+            sospetto_near = detectiveNear.analyze_probabilities(diario, turno)
+            st.markdown(f"🔎 Near ha analizzato il Nodo {sospetto_near}")
+
+        diario.mostra()
+        fig = build_plotly_figure(net)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.session_state['turno'] += 1  # Avanza il turno per il prossimo clic
+
 
 
         # === Personalità dei nodi ===
