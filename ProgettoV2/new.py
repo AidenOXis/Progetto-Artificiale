@@ -8,7 +8,7 @@ import random
 import plotly.graph_objects as go
 from pyswip import Prolog
 import copy
-
+import heapq
 # === Utilities ===
 def rnd(a=0.0, b=1.0):
     return random.uniform(a, b)
@@ -24,13 +24,15 @@ class SocialNetwork:
         self.latest_victim = None
 
         for n in self.nodes:
-            self.graph.nodes[n]['suspicion'] = 0
+            self.graph.nodes[n]['suspicion_l'] = 0         # sospetto secondo L (A*)
+            self.graph.nodes[n]['suspicion_n'] = 0         # sospetto secondo Near (Prolog)
             self.graph.nodes[n]['interactions'] = 0
             self.graph.nodes[n]['trust'] = rnd(0.85, 1.0)
             self.graph.nodes[n]['is_victim'] = False
             self.graph.nodes[n]['is_kira'] = False
             self.graph.nodes[n]['planted_evidence'] = False
             self.graph.nodes[n]['declarations'] = []
+
 
     def add_interaction(self, source, target):
         self.graph.add_edge(source, target)
@@ -47,7 +49,9 @@ class SocialNetwork:
 
     def plant_evidence(self, target):
         self.graph.nodes[target]['planted_evidence'] = True
-        self.graph.nodes[target]['suspicion'] += 1
+        self.graph.nodes[target]['suspicion_l'] += 1
+        self.graph.nodes[target]['suspicion_n'] += 1
+
 
     def simulate_interactions(self):
         for source in self.nodes:
@@ -92,51 +96,63 @@ class Kira:
             self.network.plant_evidence(framed)
         return None
 
-# === Detective L ===
+# === Detective L (A* Search-Based) ===
 class DetectiveL:
     def __init__(self, network):
         self.network = network
-        self.prolog = Prolog()
-        self.prolog.consult("rules_en.pl")
 
-    def sync_facts(self):
-        self.prolog.retractall("interaction(_,_)")
-        self.prolog.retractall("victim(_)" )
-        self.prolog.retractall("declaration(_,_)" )
+    def heuristic(self, node):
+        score = 0
+        data = self.network.graph.nodes[node]
 
-        for u, v in self.network.graph.edges():
-            self.prolog.assertz(f"interaction({u},{v})")
+        if self.network.latest_victim and self.network.graph.has_edge(node, self.network.latest_victim):
+            score += 2
 
-        for node in self.network.nodes:
-            if self.network.graph.nodes[node]['is_victim']:
-                self.prolog.assertz(f"victim({node})")
-            for dec in self.network.graph.nodes[node]['declarations']:
-                self.prolog.assertz(f"declaration({dec[0]},{dec[1]})")
+        declared = {t for (_, t) in data['declarations']}
+        actual = set(self.network.graph.successors(node))
+        mismatch = declared.symmetric_difference(actual)
+        score += len(mismatch) * 2
+
+        if data['planted_evidence']:
+            score += 3
+
+        return score
 
     def analyze(self):
-        self.sync_facts()
         suspects = []
-        for node in self.network.nodes:
-            result = list(self.prolog.query(f"lies({node})"))
-            if result:
-                self.network.graph.nodes[node]['suspicion'] += 3
-                suspects.append((node, "Lied about an interaction"))
+        visited = set()
+        pq = []
 
-        if self.network.latest_victim is not None:
-            for node in self.network.nodes:
-                if self.network.graph.has_edge(node, self.network.latest_victim):
-                    self.network.graph.nodes[node]['suspicion'] += 1
-                    suspects.append((node, f"Interacted with the victim {self.network.latest_victim}"))
+        for start in self.network.nodes:
+            if self.network.graph.nodes[start]['is_victim']:
+                continue
+            heapq.heappush(pq, (0, start, []))
+
+        while pq:
+            cost, current, path = heapq.heappop(pq)
+            if current in visited:
+                continue
+            visited.add(current)
+            total_cost = cost + self.heuristic(current)
+            self.network.graph.nodes[current]['suspicion_l'] += total_cost
+            #suspects.append((current, f"A* score: {total_cost}"))
+            if total_cost > 0:
+                suspects.append((current, "Flagged by L as suspicious"))
+
+
+            for neighbor in self.network.graph.successors(current):
+                if neighbor not in visited:
+                    heapq.heappush(pq, (total_cost, neighbor, path + [current]))
 
         return suspects
 
     def guess_kira(self):
-        scores = [(n, self.network.graph.nodes[n]['suspicion']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
+        scores = [(n, self.network.graph.nodes[n]['suspicion_l']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[0][0] if scores else None
 
     def guess_confidence(self):
-        scores = [(n, self.network.graph.nodes[n]['suspicion']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
+        scores = [(n, self.network.graph.nodes[n]['suspicion_l']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
         if not scores:
             return 0.0
         scores.sort(key=lambda x: x[1], reverse=True)
@@ -145,6 +161,70 @@ class DetectiveL:
         if top_score == 0:
             return 0.0
         return min((top_score - avg_score) / top_score, 1.0)
+
+# === Detective Near (Prolog-Based Advanced Reasoner) ===
+class DetectiveNear:
+    def __init__(self, network):
+        self.network = network
+        self.prolog = Prolog()
+        self.prolog.consult("rules_en.pl")
+
+    def sync_facts(self):
+        self.prolog.retractall("interaction(_,_)" )
+        self.prolog.retractall("victim(_)" )
+        self.prolog.retractall("declaration(_,_)" )
+        self.prolog.retractall("planted(_)" )
+
+        for u, v in self.network.graph.edges():
+            self.prolog.assertz(f"interaction({u},{v})")
+
+        for node in self.network.nodes:
+            data = self.network.graph.nodes[node]
+            if data['is_victim']:
+                self.prolog.assertz(f"victim({node})")
+            if data['planted_evidence']:
+                self.prolog.assertz(f"planted({node})")
+            for dec in data['declarations']:
+                self.prolog.assertz(f"declaration({dec[0]},{dec[1]})")
+
+    def analyze(self):
+        self.sync_facts()
+        suspects = []
+
+        rules = [
+            ("lies", 3),
+            ("fake_declaration", 2),
+            ("multi_victim_contact", 2),
+            ("suspicious_behavior", 4),
+            ("silent_operator", 2),
+        ]
+
+        for rule_name, suspicion_points in rules:
+            results = list(self.prolog.query(f"{rule_name}(X)"))
+            for r in results:
+                node = int(r["X"])
+                self.network.graph.nodes[node]['suspicion_n'] += suspicion_points
+                suspects.append((node, f"{rule_name.replace('_', ' ').capitalize()}"))
+
+        return suspects
+
+    def guess_kira(self):
+        scores = [(n, self.network.graph.nodes[n]['suspicion_n']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[0][0] if scores else None
+
+    def guess_confidence(self):
+        scores = [(n, self.network.graph.nodes[n]['suspicion_n']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
+        if not scores:
+            return 0.0
+        scores.sort(key=lambda x: x[1], reverse=True)
+        top_score = scores[0][1]
+        avg_score = sum(score for _, score in scores) / len(scores)
+        if top_score == 0:
+            return 0.0
+        return min((top_score - avg_score) / top_score, 1.0)
+
+
 
 # === Visualization ===
 def draw_graph(G, title="Graph", small=False):
@@ -182,20 +262,23 @@ def draw_graph(G, title="Graph", small=False):
 
 def draw_suspicion_histogram(graph, title="Suspicion Histogram"):
     node_ids = list(graph.nodes())
-    suspicion_levels = [graph.nodes[n].get('suspicion', 0) for n in node_ids]
+    suspicion_l = [graph.nodes[n].get('suspicion_l', 0) for n in node_ids]
+    suspicion_n = [graph.nodes[n].get('suspicion_n', 0) for n in node_ids]
 
-    fig = go.Figure(
-        data=[go.Bar(x=node_ids, y=suspicion_levels, marker_color='indianred')],
-        layout=go.Layout(
-            title=title,
-            xaxis_title="Node ID",
-            yaxis_title="Suspicion Level",
-            bargap=0.2,
-            height=400
-        )
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=node_ids, y=suspicion_l, name='Detective L (A*)', marker_color='skyblue'))
+    fig.add_trace(go.Bar(x=node_ids, y=suspicion_n, name='Detective Near (Prolog)', marker_color='indianred'))
+
+    fig.update_layout(
+        barmode='group',
+        title=title,
+        xaxis_title="Node ID",
+        yaxis_title="Suspicion Level",
+        height=400
     )
     fig.update_layout(xaxis=dict(type='category'))
     return fig
+
 
 # === Main Execution ===
 def run_sim():
@@ -216,7 +299,10 @@ def run_sim():
         kira = Kira(network)
         kira.assign(random.choice(network.nodes))
         detective_l = DetectiveL(network)
+        near = DetectiveNear(network)
         logbook = []
+        logbook_n = []
+
         snapshots = []
 
         for turn in range(num_turns):
@@ -224,10 +310,14 @@ def run_sim():
             victim = kira.act()
             network.simulate_declarations()
             suspects = detective_l.analyze()
+            suspects_n = near.analyze()
             if victim is not None:
                 logbook.append((turn, victim, "Was killed this turn"))
+                logbook_n.append((turn, victim, "Was killed this turn"))
             for s in suspects:
                 logbook.append((turn, s[0], s[1]))
+            for s in suspects_n:
+                logbook_n.append((turn, s[0], s[1]))
             snapshots.append(copy.deepcopy(network.graph))
 
         st.success(f"Simulation completed. Kira was node {kira.node}.")
@@ -250,25 +340,42 @@ def run_sim():
         with colB:
             st.plotly_chart(draw_suspicion_histogram(network.graph))
 
-        st.markdown("### 🎯 Detective L's Final Guess")
-        guess = detective_l.guess_kira()
-        confidence = detective_l.guess_confidence()
-        st.markdown(f"Detective L suspects node **{guess}** is Kira.")
-        if(guess==kira.node):
-            st.markdown(f"Detective L is **correct!**")
-        else:
-            st.markdown(f"Detective L is **incorrect!**")
-        st.progress(confidence, text=f"Confidence: {int(confidence * 100)}%")
+        st.markdown("### 🎯 Final AI Guesses")
 
-        st.divider()
+        col_l, col_n = st.columns(2)
 
-        st.title("Simulation Details:")
+        with col_l:
+            st.markdown("#### 🕵️ Detective L (A*)")
+            guess = detective_l.guess_kira()
+            confidence = detective_l.guess_confidence()
+            st.markdown(f"Suspects node **{guess}**")
+            if guess == kira.node:
+                st.success("Correct! 🎯")
+            else:
+                st.error("Incorrect ❌")
+            st.progress(confidence, text=f"Confidence: {int(confidence * 100)}%")
+
+        with col_n:
+            st.markdown("#### 🧠 Detective Near (Prolog)")
+            guess_n = near.guess_kira()
+            confidence_n = near.guess_confidence()
+            st.markdown(f"Suspects node **{guess_n}**")
+            if guess_n == kira.node:
+                st.success("Correct! 🎯")
+            else:
+                st.error("Incorrect ❌")
+            st.progress(confidence_n, text=f"Confidence: {int(confidence_n * 100)}%")
 
         # Group logbook by turn (if not already)
-        grouped_log = {}
+        grouped_log_l = {}
+        grouped_log_n = {}
         for entry in logbook:
             turn, node, reason = entry
-            grouped_log.setdefault(turn, []).append((node, reason))
+            if "killed" not in reason.lower():
+                grouped_log_l.setdefault(turn, []).append((node, reason))
+        for entry in logbook_n:
+            turn, node, reason = entry
+            grouped_log_n.setdefault(turn, []).append((node, reason))
 
         # Build UI: One expander per turn with 3 columns
         for i, graph in enumerate(snapshots):
@@ -286,12 +393,24 @@ def run_sim():
 
                 with col3:
                     st.markdown("#### 📜 Detective L's Logbook")
-                    for node, reason in grouped_log.get(i, []):
-                        st.markdown(f"- Node {node}: _{reason}_")
+                    suspects_l= grouped_log_l.get(i, [])
+                    if suspects_l:
+                        for node,reason in suspects_l:
+                            st.markdown(f"- Node {node}: _{reason}_")
+                    else:
+                        st.markdown("No suspects this turn.")
 
                 with col4:
-                    st.markdown("#### 🧠 Detective N's Logbook")
-                    st.info("(To be implemented)")
+                    st.markdown("#### 🧠 Detective Near's Logbook")
+                    suspects_n = grouped_log_n.get(i,[])
+                    if suspects_n:
+                        for node, reason in suspects_n:
+                            st.markdown(f"- Node {node}: _{reason}_")
+                    else: 
+                        st.markdown("No suspects this turn.")
+
+
+
 
         
         
