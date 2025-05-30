@@ -227,7 +227,7 @@ class DetectiveNear:
 
 
 # === Visualization ===
-def draw_graph(G, title="Graph", small=False):
+def draw_graph(G, title="Graph", small=False,key=None):
     pos = nx.spring_layout(G, seed=42)
     edge_x, edge_y = [], []
     for u, v in G.edges():
@@ -246,7 +246,12 @@ def draw_graph(G, title="Graph", small=False):
             )
         ) for n in G.nodes()
     ]
-    node_text = [f"Node {n}<br>Suspicion: {G.nodes[n].get('suspicion', 0)}" for n in G.nodes()]
+    node_text = [
+        f"Node {n}<br>"
+        f"L Suspicion: {G.nodes[n].get('suspicion_l', 0)}<br>"
+        f"Near Suspicion: {G.nodes[n].get('suspicion_n', 0)}"
+        for n in G.nodes()
+    ]
     node_trace = go.Scatter(
         x=node_x, y=node_y,
         mode='markers+text',
@@ -258,7 +263,7 @@ def draw_graph(G, title="Graph", small=False):
     
     size = 300 if small else None
     fig = go.Figure(data=[edge_trace, node_trace], layout=go.Layout(title=title, margin=dict(t=20, b=20), height=size))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True,key = key)
 
 def draw_suspicion_histogram(graph, title="Suspicion Histogram"):
     node_ids = list(graph.nodes())
@@ -292,7 +297,32 @@ def run_sim():
 
     with col00:
         st.title("Description")
-        st.markdown("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.")
+        st.markdown("""
+Welcome to **Kira: AI Simulation**, an interactive investigative experiment inspired by *Death Note*, designed to test intelligent agents within a complex and dynamic social network.
+
+In this simulation:
+- A network of individuals interacts over time.
+- Among them hides **Kira**, a strategic killer capable of murdering, deceiving, and planting false evidence.
+- Two AI detectives, **L** and **Near**, analyze behaviors to uncover the truth:
+    - 🕵️‍♂️ **Detective L** uses A* search, guided by heuristic reasoning based on network structure.
+    - 🧠 **Detective Near** applies symbolic logic through a Prolog rule engine to detect contradictions and suspicious patterns.
+
+Each turn simulates:
+- Social interactions (random or planned),
+- Possible murders by Kira,
+- Declarations (truthful or deceptive),
+- Analysis by the detectives and suspicion updates.
+
+The ultimate goal is simple:
+**Unmask Kira**... before it's too late.
+
+This simulation is designed to be:
+- 👁️‍🗨️ **Interactive and transparent**, featuring network graphs, logbooks, and suspicion histograms,
+- 🧪 **Educational**, showcasing different AI techniques for social reasoning and deductive logic,
+- 🎮 **Modular and expandable**, ready to support new agents, rules, or advanced mechanics.
+
+Are you ready to watch artificial intelligence... solve a murder?
+""")
 
     if st.button("Start Simulation"):
         network = SocialNetwork(num_nodes)
@@ -384,7 +414,7 @@ def run_sim():
 
                 with col1:
                     #st.markdown("#### 🔁 Network Graph")
-                    draw_graph(graph, title=f"Network Graph", small=True)
+                    draw_graph(graph, title=f"Network Graph", small=True,key=f"graph_{i}")
                 
                 with col2:
                     #st.markdown("#### 📊 Suspicion Histogram")
