@@ -102,6 +102,8 @@ class Kira:
 class DetectiveL:
     def __init__(self, network):
         self.network = network
+        self.seen_suspects = set()  # nodi già flaggati
+
 
     def heuristic(self, node):
         score = 0
@@ -136,17 +138,19 @@ class DetectiveL:
                 continue
             visited.add(current)
             total_cost = cost + self.heuristic(current)
-            self.network.graph.nodes[current]['suspicion_l'] += total_cost
-            #suspects.append((current, f"A* score: {total_cost}"))
-            if total_cost > 0:
-                suspects.append((current, "Flagged by L as suspicious"))
 
+            if total_cost > 0 and current not in self.seen_suspects:
+                self.network.graph.nodes[current]['suspicion_l'] = total_cost  # non si accumula
+                suspects.append((current, "Flagged by L as suspicious"))
+                self.seen_suspects.add(current)
 
             for neighbor in self.network.graph.successors(current):
                 if neighbor not in visited:
                     heapq.heappush(pq, (total_cost, neighbor, path + [current]))
 
         return suspects
+
+
 
     def guess_kira(self):
         scores = [(n, self.network.graph.nodes[n]['suspicion_l']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
@@ -170,6 +174,7 @@ class DetectiveNear:
         self.network = network
         self.prolog = Prolog()
         self.prolog.consult("rules_en.pl")
+        self.seen_suspects = set()
 
     def sync_facts(self):
         self.prolog.retractall("interaction(_,_)" )
@@ -205,10 +210,15 @@ class DetectiveNear:
             results = list(self.prolog.query(f"{rule_name}(X)"))
             for r in results:
                 node = int(r["X"])
-                self.network.graph.nodes[node]['suspicion_n'] += suspicion_points
-                suspects.append((node, f"{rule_name.replace('_', ' ').capitalize()}"))
+                key = (node, rule_name)
+                if key not in self.seen_suspects:
+                    self.network.graph.nodes[node]['suspicion_n'] += suspicion_points  # accumula solo se nuova regola
+                    suspects.append((node, rule_name.replace('_', ' ').capitalize()))
+                    self.seen_suspects.add(key)
 
         return suspects
+
+
 
     def guess_kira(self):
         scores = [(n, self.network.graph.nodes[n]['suspicion_n']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
