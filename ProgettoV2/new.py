@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 from pyswip import Prolog
 import copy
 import heapq
+from collections import defaultdict, Counter
+
 # === Utilities ===
 def rnd(a=0.0, b=1.0):
     return random.uniform(a, b)
@@ -102,23 +104,21 @@ class Kira:
 class DetectiveL:
     def __init__(self, network):
         self.network = network
-        self.seen_suspects = set()  # nodi già flaggati
-
 
     def heuristic(self, node):
         score = 0
         data = self.network.graph.nodes[node]
 
         if self.network.latest_victim and self.network.graph.has_edge(node, self.network.latest_victim):
-            score += 2
+            score += 6
 
         declared = {t for (_, t) in data['declarations']}
         actual = set(self.network.graph.successors(node))
         mismatch = declared.symmetric_difference(actual)
-        score += len(mismatch) * 2
+        score += len(mismatch) * 6
 
         if data['planted_evidence']:
-            score += 3
+            score += 12
 
         return score
 
@@ -138,19 +138,17 @@ class DetectiveL:
                 continue
             visited.add(current)
             total_cost = cost + self.heuristic(current)
-
-            if total_cost > 0 and current not in self.seen_suspects:
-                self.network.graph.nodes[current]['suspicion_l'] = total_cost  # non si accumula
+            self.network.graph.nodes[current]['suspicion_l'] += total_cost
+            #suspects.append((current, f"A* score: {total_cost}"))
+            if total_cost > 0:
                 suspects.append((current, "Flagged by L as suspicious"))
-                self.seen_suspects.add(current)
+
 
             for neighbor in self.network.graph.successors(current):
                 if neighbor not in visited:
                     heapq.heappush(pq, (total_cost, neighbor, path + [current]))
 
         return suspects
-
-
 
     def guess_kira(self):
         scores = [(n, self.network.graph.nodes[n]['suspicion_l']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
@@ -174,7 +172,6 @@ class DetectiveNear:
         self.network = network
         self.prolog = Prolog()
         self.prolog.consult("rules_en.pl")
-        self.seen_suspects = set()
 
     def sync_facts(self):
         self.prolog.retractall("interaction(_,_)" )
@@ -210,15 +207,10 @@ class DetectiveNear:
             results = list(self.prolog.query(f"{rule_name}(X)"))
             for r in results:
                 node = int(r["X"])
-                key = (node, rule_name)
-                if key not in self.seen_suspects:
-                    self.network.graph.nodes[node]['suspicion_n'] += suspicion_points  # accumula solo se nuova regola
-                    suspects.append((node, rule_name.replace('_', ' ').capitalize()))
-                    self.seen_suspects.add(key)
+                self.network.graph.nodes[node]['suspicion_n'] += suspicion_points
+                suspects.append((node, f"{rule_name.replace('_', ' ').capitalize()}"))
 
         return suspects
-
-
 
     def guess_kira(self):
         scores = [(n, self.network.graph.nodes[n]['suspicion_n']) for n in self.network.nodes if not self.network.graph.nodes[n]['is_victim']]
@@ -236,7 +228,20 @@ class DetectiveNear:
             return 0.0
         return min((top_score - avg_score) / top_score, 1.0)
 
+def collapse_suspicions(entries):
+    """
+    entries: list of (node, reason)
+    returns: dict {node: Counter of reasons}
+    """
+    grouped = defaultdict(list)
+    for node, reason in entries:
+        grouped[node].append(reason)
 
+    collapsed = {}
+    for node, reasons in grouped.items():
+        reason_counts = Counter(reasons)
+        collapsed[node] = reason_counts
+    return collapsed
 
 # === Visualization ===
 def draw_graph(G, title="Graph", pos=None, small=False,key=None):
@@ -316,7 +321,7 @@ In this simulation:
 - A network of individuals interacts over time.
 - Among them hides **Kira**, a strategic killer capable of murdering, deceiving, and planting false evidence.
 - Two AI detectives, **L** and **Near**, analyze behaviors to uncover the truth:
-    - 🕵️‍♂️ **Detective L** uses A* search, guided by heuristic reasoning based on network structure.
+    - 🕵️‍♂️ **Detective L** uses a search algorithm inspired by A*, guided by heuristic reasoning based on network structure.
     - 🧠 **Detective Near** applies symbolic logic through a Prolog rule engine to detect contradictions and suspicious patterns.
 
 Each turn simulates:
@@ -377,7 +382,7 @@ Are you ready to watch artificial intelligence... solve a murder?
         """
         st.markdown(legend_text)
 
-        fixed_positions = nx.spring_layout(network.graph, seed=42, k=0.8, iterations=100)
+        fixed_positions = nx.spring_layout(network.graph, seed=42,k=0.8, iterations=100)
         colA, colB = st.columns([1.4,1], gap="medium")
         with colA:
             draw_graph(network.graph, title="Final State Network", pos=fixed_positions)
@@ -447,9 +452,15 @@ Are you ready to watch artificial intelligence... solve a murder?
                 with col4:
                     st.markdown("#### 🧠 Detective Near's Logbook")
                     suspects_n = grouped_log_n.get(i,[])
+
+                    collapsed = collapse_suspicions(suspects_n)
                     if suspects_n:
-                        for node, reason in suspects_n:
-                            st.markdown(f"- Node {node}: _{reason}_")
+                        for node, reasons in collapsed.items():
+                            reason_text = ', '.join(
+                                f"{reason} (×{count})" if count > 1 else reason
+                                for reason, count in reasons.items()
+                            )
+                            st.markdown(f"- Node {node}: _{reason_text}_")
                     else: 
                         st.markdown("No suspects this turn.")
 
