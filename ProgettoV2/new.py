@@ -83,17 +83,19 @@ class Kira:
         self.network.set_kira(node)
 
     def act(self):
-        target = random.choice([n for n in self.network.nodes if n != self.node])
-        self.network.add_interaction(self.node, target)
+        #target = random.choice([n for n in self.network.nodes if n != self.node])
+        #self.network.add_interaction(self.node, target)
 
         if random.random() < 0.5:
             victim = random.choice([n for n in self.network.nodes if n != self.node and not self.network.graph.nodes[n]['is_victim']])
             self.network.mark_victim(victim)
+            self.network.add_interaction(self.node, victim)
             return victim
 
         if random.random() < 0.3:
             framed = random.choice([n for n in self.network.nodes if n != self.node])
             self.network.plant_evidence(framed)
+            self.network.add_interaction(self.node, framed)
         return None
 
 # === Detective L (A* Search-Based) ===
@@ -227,8 +229,8 @@ class DetectiveNear:
 
 
 # === Visualization ===
-def draw_graph(G, title="Graph", small=False,key=None):
-    pos = nx.spring_layout(G, seed=42)
+def draw_graph(G, title="Graph", pos=None, small=False,key=None):
+    #pos = nx.spring_layout(G, seed=42)
     edge_x, edge_y = [], []
     for u, v in G.edges():
         x0, y0 = pos[u]
@@ -326,6 +328,7 @@ Are you ready to watch artificial intelligence... solve a murder?
 
     if st.button("Start Simulation"):
         network = SocialNetwork(num_nodes)
+        fixed_positions = nx.spring_layout(network.graph, seed=42)
         kira = Kira(network)
         kira.assign(random.choice(network.nodes))
         detective_l = DetectiveL(network)
@@ -364,9 +367,10 @@ Are you ready to watch artificial intelligence... solve a murder?
         """
         st.markdown(legend_text)
 
+        fixed_positions = nx.spring_layout(network.graph, seed=42, k=0.8, iterations=100)
         colA, colB = st.columns([1.4,1], gap="medium")
         with colA:
-            draw_graph(network.graph, title="Final State Network")
+            draw_graph(network.graph, title="Final State Network", pos=fixed_positions)
         with colB:
             st.plotly_chart(draw_suspicion_histogram(network.graph))
 
@@ -410,11 +414,11 @@ Are you ready to watch artificial intelligence... solve a murder?
         # Build UI: One expander per turn with 3 columns
         for i, graph in enumerate(snapshots):
             with st.expander(f"Turn {i}"):
-                col1, col2, col3, col4 = st.columns([1,0.65,0.8,0.8], gap="small")
+                col1, col2, col3, col4 = st.columns([1.3,0.8,0.6,0.6], gap="small")
 
                 with col1:
                     #st.markdown("#### 🔁 Network Graph")
-                    draw_graph(graph, title=f"Network Graph", small=True,key=f"graph_{i}")
+                    draw_graph(graph, title=f"Network Graph", small=True,key=f"graph_{i}", pos=fixed_positions)
                 
                 with col2:
                     #st.markdown("#### 📊 Suspicion Histogram")
