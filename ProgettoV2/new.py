@@ -10,6 +10,8 @@ from pyswip import Prolog
 import copy
 import heapq
 from collections import defaultdict, Counter
+import pandas as pd
+import plotly.express as px
 
 # === Utilities ===
 def rnd(a=0.0, b=1.0):
@@ -463,12 +465,88 @@ Are you ready to watch artificial intelligence... solve a murder?
                             st.markdown(f"- Node {node}: _{reason_text}_")
                     else: 
                         st.markdown("No suspects this turn.")
+        st.divider()
+    st.markdown("### 🧪 Batch Testing (opzionale)")
+   
+
+    if st.button("Esegui 30 simulazioni di test"):
+        batch_test_ui(num_tests=30, num_nodes=num_nodes, num_turns=num_turns)
+        st.markdown("#### ✅ Risultati:")
+  
 
 
+def simulate_once(num_nodes=10, num_turns=5, verbose=False):
+    network = SocialNetwork(num_nodes)
+    kira = Kira(network)
+    kira.assign(random.choice(network.nodes))
+    detective_l = DetectiveL(network)
+    near = DetectiveNear(network)
+
+    for _ in range(num_turns):
+        network.simulate_interactions()
+        kira.act()
+        network.simulate_declarations()
+        detective_l.analyze()
+        near.analyze()
+
+    guess_l = detective_l.guess_kira()
+    guess_n = near.guess_kira()
+    conf_l = detective_l.guess_confidence()
+    conf_n = near.guess_confidence()
+
+    result = {
+        "kira": kira.node,
+        "guess_l": guess_l,
+        "guess_n": guess_n,
+        "correct_l": guess_l == kira.node,
+        "correct_n": guess_n == kira.node,
+        "confidence_l": conf_l,
+        "confidence_n": conf_n,
+    }
+
+    if verbose:
+        print(result)
+
+    return result
+
+def run_batch_test(num_tests=30, num_nodes=10, num_turns=5):
+    results = [simulate_once(num_nodes, num_turns) for _ in range(num_tests)]
+
+    correct_l = sum(r["correct_l"] for r in results)
+    correct_n = sum(r["correct_n"] for r in results)
+    avg_conf_l = sum(r["confidence_l"] for r in results) / num_tests
+    avg_conf_n = sum(r["confidence_n"] for r in results) / num_tests
+
+    print(f"\nBatch results on {num_tests} simulations:")
+    print(f"Detective L: correct {correct_l}/{num_tests} ({correct_l/num_tests:.2%}), avg confidence: {avg_conf_l:.2f}")
+    print(f"Detective Near: correct {correct_n}/{num_tests} ({correct_n/num_tests:.2%}), avg confidence: {avg_conf_n:.2f}")
 
 
-        
-        
+def batch_test_ui(num_tests, num_nodes, num_turns):
+    results = [simulate_once(num_nodes, num_turns) for _ in range(num_tests)]
+    correct_l = sum(r["correct_l"] for r in results)
+    correct_n = sum(r["correct_n"] for r in results)
+    avg_conf_l = sum(r["confidence_l"] for r in results) / num_tests
+    avg_conf_n = sum(r["confidence_n"] for r in results) / num_tests
+
+    st.markdown("#### ✅ Risultati:")
+    st.markdown(f"- **Detective L:** {correct_l}/{num_tests} corrette ({correct_l/num_tests:.1%}), confidenza media: {avg_conf_l:.2f}")
+    st.markdown(f"- **Detective Near:** {correct_n}/{num_tests} corrette ({correct_n/num_tests:.1%}), confidenza media: {avg_conf_n:.2f}")
+
+    df = pd.DataFrame({
+        "Detective": ["Detective L", "Detective Near"],
+        "Corrette": [correct_l, correct_n],
+        "Confidenza media": [avg_conf_l, avg_conf_n]
+    })
+
+    st.markdown("#### 📊 Confronto Visivo")
+    fig = px.bar(df, x="Detective", y="Corrette", color="Detective",
+                 text="Corrette", barmode="group", height=400)
+    fig.update_layout(showlegend=False, yaxis_title="Predizioni Corrette", xaxis_title="")
+    fig.update_traces(textposition='outside')
+    st.plotly_chart(fig, use_container_width=True)
+
+
 
 if __name__ == "__main__":
     run_sim()
