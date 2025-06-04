@@ -2,6 +2,10 @@
 # Inspired by Death Note - Clean Rebuild
 # Focused on chapters 1–18 of Russell & Norvig AI textbook
 
+
+#Version with simulations
+
+
 import streamlit as st
 import networkx as nx
 import random
